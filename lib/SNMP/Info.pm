@@ -1265,6 +1265,12 @@ family is reported as C<qts> or C<quts hero>.
 
 See documentation in L<SNMP::Info::Layer7::QNAP> for details.
 
+=item SNMP::Info::Layer7::Synology
+
+Subclass for Synology NAS devices running DiskStation Manager (DSM).
+
+See documentation in L<SNMP::Info::Layer7::Synology> for details.
+
 =item SNMP::Info::Layer7::Kemp
 
 Subclass for Kemp LoadMaster appliances.
@@ -1836,6 +1842,48 @@ sub device_type {
 
     my $id = $info->id() || 'undef';
     my $soid = $id;
+
+    # DSM commonly reports Net-SNMP's generic Linux sysObjectID.  Probe only
+    # that exact ID and Synology's own enterprise.  The latter is shared by
+    # non-DSM products, so require both the model and a DSM version marker.
+    my $session = $info->session();
+    my $is_synology = 0;
+    if ( defined($session)
+        && defined($soid)
+        && $soid
+        =~ /^\.?1\.3\.6\.1\.4\.1\.(?:6574(?:\.|$)|8072\.3\.2\.10$)/ )
+    {
+        my $model_probe = SNMP::Varbind->new(
+            [ '.1.3.6.1.4.1.6574.1.5.1', 0 ]
+        );
+        my $model = $session->get($model_probe);
+        my $model_error = $session->{ErrorNum} || $session->{ErrorStr};
+
+        if ( !$model_error && defined($model) ) {
+            $model =~ s/\x00+$//;
+            $model =~ s/^\s+|\s+$//g;
+        }
+
+        if ( !$model_error
+            && defined($model)
+            && length($model)
+            && $model !~ /^NOSUCH(?:OBJECT|INSTANCE)$/i )
+        {
+            my $version_probe = SNMP::Varbind->new(
+                [ '.1.3.6.1.4.1.6574.1.5.3', 0 ]
+            );
+            my $version = $session->get($version_probe);
+            my $version_error = $session->{ErrorNum} || $session->{ErrorStr};
+
+            if ( !$version_error && defined($version) ) {
+                $version =~ s/\x00+$//;
+                $version =~ s/^\s+|\s+$//g;
+                $is_synology = $version =~ /^DSM\s+\S+/i;
+            }
+        }
+    }
+
+    return 'SNMP::Info::Layer7::Synology' if $is_synology;
 
     # Hash for generic fallback to a device class if unable to determine using
     # the sysDescr regex.
